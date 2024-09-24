@@ -348,7 +348,11 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
 
         /// Finds the value associated with a key in the map
         pub fn get(self: *const @This(), k: K) ?V {
-            return if (self.getNode(k)) |n| n.value else null;
+            return (self.getPtr(k) orelse return null).*;
+        }
+        /// Finds the value associated with a key in the map, and returns the pointer to it
+        pub fn getPtr(self: *const @This(), k: K) ?*V {
+            return &(self.getNode(k) orelse return null).value;
         }
 
         pub fn getNode(self: *const @This(), k: K) ?*Node {

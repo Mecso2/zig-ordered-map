@@ -8,7 +8,7 @@ Ordered Map in Zig, with an interface similar to HashMap's
 .dependencies = .{
     .ordered_map=.{
         .url = "https://github.com/Mecso2/zig-ordered-map/archive/refs/heads/master.tar.gz",
-        .hash = "12201a5772561686ef98da8b7b0f80220f6569461dc41f6b0c5230bfd96b8e02e190"
+        .hash = "12205a3014919c4f94f20b36509e9dae183d44e81d442cad01ecceae69cc5955e5a5"
     }
 }
 ```
