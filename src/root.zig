@@ -31,7 +31,7 @@ fn argTypes(comptime Function: type) []const ?type {
     return argument_field_list[0..];
 }
 
-pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime comp_fn: anytype) type {
+pub fn OrderedMapUnmanaged(comptime K: type, comptime V: type, ctx: anytype, comptime comp_fn: anytype) type {
     const inf = @typeInfo(@TypeOf(comp_fn));
     if (inf != .Fn) @compileError("comperison function must be a function");
     if (inf.Fn.return_type != std.math.Order) @compileError("retrun type of comperison function must be std.math.Order");
@@ -309,7 +309,6 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
             }
         };
 
-        alloc: std.mem.Allocator,
         root: ?*Node = null,
         count: usize = 0,
 
@@ -317,7 +316,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
         /// This does *not* deinit keys or values!
         /// If your keys or values need to be released, ensure
         /// that that is done before calling this function.
-        pub fn deinit(self: *@This()) void {
+        pub fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
             if (self.root == null) return;
             var node: *Node = self.root.?;
             while (true) {
@@ -336,10 +335,10 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
 
                 const p: *Node = node.parent orelse {
                     std.debug.assert(node == self.root);
-                    self.alloc.destroy(node);
+                    alloc.destroy(node);
                     break;
                 };
-                self.alloc.destroy(node);
+                alloc.destroy(node);
                 node = p;
             }
 
@@ -375,14 +374,14 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
         }
 
         /// Removes the first element from the map and returns its value
-        pub fn deque(self: *@This()) ?V {
-            return (self.dequeWithKey() orelse return null).value;
+        pub fn deque(self: *@This(), alloc: std.mem.Allocator) ?V {
+            return (self.dequeWithKey(alloc) orelse return null).value;
         }
         /// Removes the first element from the map and returns its key and value
-        pub fn dequeWithKey(self: *@This()) ?KV {
+        pub fn dequeWithKey(self: *@This(), alloc: std.mem.Allocator) ?KV {
             const node: *Node = self.getFirstNode() orelse return null;
             const r: KV = .{ .key = node.key, .value = node.value };
-            self.removeNode(node);
+            self.removeNode(alloc, node);
 
             return r;
         }
@@ -409,10 +408,10 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
         /// Otherwise, puts a new item with undefined value, and
         /// the `value_pointer` point to it. Caller should then initialize
         /// the value.
-        pub fn getOrPut(self: *@This(), k: K) AllocError!GetOrPutResult {
+        pub fn getOrPut(self: *@This(), alloc: std.mem.Allocator, k: K) AllocError!GetOrPutResult {
             var parent: *Node = self.root orelse {
                 std.debug.assert(self.count == 0);
-                self.root = try self.alloc.create(Node);
+                self.root = try alloc.create(Node);
                 self.root.?.* = .{ .color = .Black, .key = k, .value = undefined };
                 self.count = 1;
                 return .{ .value_ptr = &self.root.?.value, .found_existing = false };
@@ -428,7 +427,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
                 }
             };
 
-            var node: *Node = try self.alloc.create(Node);
+            var node: *Node = try alloc.create(Node);
             (switch (which) {
                 .left => parent.left,
                 .right => parent.right,
@@ -444,15 +443,15 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
             return .{ .value_ptr = &node.value, .found_existing = false };
         }
 
-        pub fn getOrPutValue(self: *@This(), k: K, v: V) AllocError!*V {
-            const res = (try self.getOrPut(k));
+        pub fn getOrPutValue(self: *@This(), alloc: std.mem.Allocator, k: K, v: V) AllocError!*V {
+            const res = (try self.getOrPut(alloc, k));
             if (!res.found_existing) res.value_ptr.* = v;
             return res.value_ptr;
         }
 
         /// Inserts a new entry into the map, returning the previous value, if any.
-        pub fn fetchPut(self: *@This(), k: K, v: V) AllocError!?V {
-            const result: GetOrPutResult = try self.getOrPut(k);
+        pub fn fetchPut(self: *@This(), alloc: std.mem.Allocator, k: K, v: V) AllocError!?V {
+            const result: GetOrPutResult = try self.getOrPut(alloc, k);
             defer result.value_ptr.* = v;
 
             if (result.found_existing) {
@@ -464,18 +463,18 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
 
         /// Clobbers any existing data. To detect if a put would clobber
         /// existing data, see `getOrPut`.
-        pub fn put(self: *@This(), k: K, v: V) AllocError!void {
-            (try self.getOrPut(k)).value_ptr.* = v;
+        pub fn put(self: *@This(), alloc: std.mem.Allocator, k: K, v: V) AllocError!void {
+            (try self.getOrPut(alloc, k)).value_ptr.* = v;
         }
 
         /// Inserts a key-value pair into the map, asserting that no previous
         /// entry with the same key is already present
-        pub fn putNoClobber(self: *@This(), k: K, v: V) AllocError!void {
-            std.debug.assert(try self.fetchPut(k, v) == null);
+        pub fn putNoClobber(self: *@This(), alloc: std.mem.Allocator, k: K, v: V) AllocError!void {
+            std.debug.assert(try self.fetchPut(alloc, k, v) == null);
         }
 
-        pub fn removeNode(self: *@This(), node: *Node) void {
-            const replacement: ?*Node = node.delete(self.alloc);
+        pub fn removeNode(self: *@This(), alloc: std.mem.Allocator, node: *Node) void {
+            const replacement: ?*Node = node.delete(alloc);
             self.count -= 1;
             if (self.root == node) {
                 self.root = replacement orelse null;
@@ -492,15 +491,15 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
         }
 
         /// Remove a node associated with e key, and return its value
-        pub fn fetchRemove(self: *@This(), k: K) ?V {
+        pub fn fetchRemove(self: *@This(), alloc: std.mem.Allocator, k: K) ?V {
             const node: *Node = self.getNode(k) orelse return null;
-            defer self.removeNode(node);
+            defer self.removeNode(alloc, node);
             return node.value;
         }
 
         /// Removes a value from the map and returns the removed value.
-        pub fn remove(self: *@This(), k: K) bool {
-            return self.fetchRemove(k) != null;
+        pub fn remove(self: *@This(), alloc: std.mem.Allocator, k: K) bool {
+            return self.fetchRemove(alloc, k) != null;
         }
 
         pub fn nodeIterator(self: *@This()) NodeIterator {
@@ -516,21 +515,21 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
         /// Set the map to an empty state, making deinitialization a no-op, and
         /// returning a copy of the original.
         pub fn move(self: *@This()) @This() {
-            defer self.* = .{ .alloc = self.alloc };
+            defer self.* = .{};
             return self.*;
         }
 
-        pub fn clone(self: *const @This()) AllocError!@This() {
-            if (self.count == 0) return .{ .alloc = self.alloc };
+        pub fn clone(self: *const @This(), alloc: std.mem.Allocator) AllocError!@This() {
+            if (self.count == 0) return .{};
 
-            var ret: @This() = .{ .root = try self.alloc.create(Node), .alloc = self.alloc, .count = self.count };
+            var ret: @This() = .{ .root = try alloc.create(Node), .count = self.count };
             ret.root.?.key = self.root.?.key;
             ret.root.?.value = self.root.?.value;
             ret.root.?.color = self.root.?.color;
             ret.root.?.parent = null;
             ret.root.?.left = null;
             ret.root.?.right = null;
-            errdefer ret.deinit();
+            errdefer ret.deinit(alloc);
 
             var old_node: *Node = self.root.?;
             var new_node: *Node = ret.root.?;
@@ -538,7 +537,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
                 if (new_node.left == null) {
                     if (old_node.left) |o| {
                         std.debug.assert(o.parent == old_node);
-                        new_node.left = try self.alloc.create(Node);
+                        new_node.left = try alloc.create(Node);
                         new_node.left.?.key = o.key;
                         new_node.left.?.value = o.value;
                         new_node.left.?.color = o.color;
@@ -554,7 +553,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
                 if (new_node.right == null) {
                     if (old_node.right) |o| {
                         std.debug.assert(o.parent == old_node);
-                        new_node.right = try self.alloc.create(Node);
+                        new_node.right = try alloc.create(Node);
                         new_node.right.?.key = o.key;
                         new_node.right.?.value = o.value;
                         new_node.right.?.color = o.color;
@@ -575,6 +574,115 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
             }
 
             return ret;
+        }
+    };
+}
+
+pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime comp_fn: anytype) type {
+    const Unmanaged = OrderedMapUnmanaged(K, V, ctx, comp_fn);
+    return struct {
+        pub const KV = Unmanaged.KV;
+        pub const Node: type = Unmanaged.Node;
+        pub const NodeIterator = Unmanaged.NodeIterator;
+        pub const Iterator = Unmanaged.Iterator;
+
+        unmanaged: Unmanaged = .{},
+        alloc: std.mem.Allocator,
+
+        /// Deallocates the tree.
+        /// This does *not* deinit keys or values!
+        /// If your keys or values need to be released, ensure
+        /// that that is done before calling this function.
+        pub inline fn deinit(self: *@This()) void {
+            self.unmanaged.deinit(self.alloc);
+        }
+        pub inline fn count(self: @This()) usize {
+            return self.unmanaged.count;
+        }
+        /// Finds the value associated with a key in the map
+        pub inline fn get(self: *const @This(), k: K) ?V {
+            return self.unmanaged.get(k);
+        }
+        /// Finds the value associated with a key in the map, and returns the pointer to it
+        pub inline fn getPtr(self: *@This(), k: K) ?*V {
+            return self.unmanaged.getPtr(k);
+        }
+        /// Finds the node associated with a key in the map
+        pub inline fn getNode(self: *@This(), k: K) ?*Node {
+            return self.unmanaged.getNode(k);
+        }
+        pub inline fn getFirstNode(self: *@This()) ?*Node {
+            return self.unmanaged.getFirstNode();
+        }
+        /// Removes the first element from the map and returns its value
+        pub inline fn deque(self: *@This()) ?V {
+            return self.unmanaged.deque(self.alloc);
+        }
+        /// Removes the first element from the map and returns its key and value
+        pub inline fn dequeWithKey(self: *@This()) ?KV {
+            return self.unmanaged.dequeWithKey(self.alloc);
+        }
+        pub inline fn getLastNode(self: *@This()) ?*Node {
+            return self.unmanaged.getLastNode();
+        }
+        /// Check if the map contains a key
+        pub inline fn contains(self: *const @This(), k: K) bool {
+            return self.unmanaged.contains(k);
+        }
+        pub const GetOrPutResult = Unmanaged.GetOrPutResult;
+        /// If key exists this function cannot fail.
+        /// If there is an existing item with `key`, then the result's
+        /// `value_pointer` point to it, and found_existing is true.
+        /// Otherwise, puts a new item with undefined value, and
+        /// the `value_pointer` point to it. Caller should then initialize
+        /// the value.
+        pub inline fn getOrPut(self: *@This(), k: K) AllocError!GetOrPutResult {
+            return self.unmanaged.getOrPut(self.alloc, k);
+        }
+        pub inline fn getOrPutValue(self: *@This(), k: K, v: V) AllocError!*V {
+            return self.unmanaged.getOrPutValue(self.alloc, k, v);
+        }
+        /// Inserts a new entry into the map, returning the previous value, if any.
+        pub inline fn fetchPut(self: *@This(), k: K, v: V) AllocError!?V {
+            return self.unmanaged.fetchPut(self.alloc, k, v);
+        }
+        /// Clobbers any existing data. To detect if a put would clobber
+        /// existing data, see `getOrPut`.
+        pub inline fn put(self: *@This(), k: K, v: V) AllocError!void {
+            return self.unmanaged.put(self.alloc, k, v);
+        }
+        /// Inserts a key-value pair into the map, asserting that no previous
+        /// entry with the same key is already present
+        pub inline fn putNoClobber(self: *@This(), k: K, v: V) AllocError!void {
+            return self.unmanaged.putNoClobber(self.alloc, k, v);
+        }
+        pub inline fn removeNode(self: *@This(), node: *Node) void {
+            return self.unmanaged.removeNode(self.alloc, node);
+        }
+        /// Remove a node associated with e key, and return its value
+        pub inline fn fetchRemove(self: *@This(), k: K) ?V {
+            return self.unmanaged.fetchRemove(self.alloc, k);
+        }
+
+        /// Removes a value from the map and returns the removed value.
+        pub inline fn remove(self: *@This(), k: K) bool {
+            return self.unmanaged.remove(self.alloc, k);
+        }
+        pub inline fn nodeIterator(self: *@This()) NodeIterator {
+            return self.unmanaged.nodeIterator();
+        }
+        /// Create an iterator over the entries in the map.
+        /// The iterator is invalidated if the map is modified.
+        pub inline fn iterator(self: *const @This()) Iterator {
+            return self.unmanaged.iterator();
+        }
+        /// Set the map to an empty state, making deinitialization a no-op, and
+        /// returning a copy of the original.
+        pub inline fn move(self: *@This()) @This() {
+            return .{ .alloc = self.alloc, .unmanaged = self.unmanaged.move() };
+        }
+        pub inline fn clone(self: *const @This()) AllocError!@This() {
+            return .{ .alloc = self.alloc, .unmanaged = try self.unmanaged.clone(self.alloc) };
         }
     };
 }
@@ -676,7 +784,7 @@ test "deque" {
     defer queue.deinit();
 
     try queue.put(.{ .dist = 0, .coor = .{ 0, 0 } }, {});
-    _ = queue.dequeWithKey();
+    _ = queue.deque();
     try queue.put(.{ .dist = 2, .coor = .{ 1, 0 } }, {});
     try queue.put(.{ .dist = 2, .coor = .{ 0, 1 } }, {});
     _ = queue.dequeWithKey();
@@ -1110,7 +1218,7 @@ test "clone" {
     var a = try map.clone();
     defer a.deinit();
 
-    try expectEqual(a.count, 0);
+    try expectEqual(a.count(), 0);
 
     try a.put(1, 1);
     try a.put(2, 2);
@@ -1119,7 +1227,7 @@ test "clone" {
     var b = try a.clone();
     defer b.deinit();
 
-    try expectEqual(b.count, 3);
+    try expectEqual(b.count(), 3);
     try expectEqual(b.get(1).?, 1);
     try expectEqual(b.get(2).?, 2);
     try expectEqual(b.get(3).?, 3);
@@ -1156,7 +1264,7 @@ test "remove" {
             _ = map.remove(i);
         }
     }
-    try expectEqual(map.count, 10);
+    try expectEqual(map.count(), 10);
     var it = map.iterator();
     while (it.next()) |kv| {
         try expectEqual(kv.key, kv.value);
@@ -1192,7 +1300,7 @@ test "reverse removes" {
         }
     }
 
-    try expectEqual(map.count, 0);
+    try expectEqual(map.count(), 0);
 }
 
 test "multiple removes on same metadata" {
@@ -1255,12 +1363,12 @@ test "put and remove loop in random order" {
         for (keys.items) |key| {
             try map.put(key, key);
         }
-        try expectEqual(map.count, size);
+        try expectEqual(map.count(), size);
 
         for (keys.items) |key| {
             _ = map.remove(key);
         }
-        try expectEqual(map.count, 0);
+        try expectEqual(map.count(), 0);
     }
 }
 
@@ -1396,7 +1504,7 @@ test "removeNode" {
         try map.put(i, 0);
     }
 
-    try testing.expect(map.count == 10);
+    try testing.expect(map.count() == 10);
 
     i = 0;
     while (i < 10) : (i += 1) {
@@ -1408,7 +1516,7 @@ test "removeNode" {
         }
     }
 
-    try testing.expect(map.count == 0);
+    try testing.expect(map.count() == 0);
 }
 
 test "removeNode 0 sized key" {
@@ -1417,7 +1525,7 @@ test "removeNode 0 sized key" {
 
     try map.put(0, 0);
 
-    try testing.expect(map.count == 1);
+    try testing.expect(map.count() == 1);
 
     const key_ptr = map.getNode(0);
     try testing.expect(key_ptr != null);
@@ -1426,7 +1534,7 @@ test "removeNode 0 sized key" {
         map.removeNode(ptr);
     }
 
-    try testing.expect(map.count == 0);
+    try testing.expect(map.count() == 0);
 }
 
 test "repeat fetchRemove" {
