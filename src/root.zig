@@ -8,14 +8,6 @@ inline fn atOffset(stru: anytype, offset: usize, comptime T: type) *T {
     return @ptrFromInt(@intFromPtr(stru) + offset);
 }
 
-/// Given a function type, it returns the return type of the function
-fn returnType(comptime fun: type) ?type {
-    return switch (@typeInfo(fun)) {
-        .Fn => |f| f.return_type,
-        else => @compileError("only for functions"),
-    };
-}
-
 /// Given a function it returns the types of arguments it takes
 ///
 /// - `argTypes(fn(u32, u8) void)` => `&[_]const ?type{u32, u8}`
