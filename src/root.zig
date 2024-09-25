@@ -53,6 +53,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
         @compileError("Comperison function must take two key types(or anytypes) as its first two parameters");
 
     return struct {
+        pub const KV = struct { key: K, value: V };
         pub const Node: type = struct {
             parent: ?*@This() = null,
             left: ?*@This() = null,
@@ -298,13 +299,21 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
                 return self;
             }
         };
-        const Iterator = struct {
+        pub const NodeIterator = struct {
             p: ?*Node,
             pub fn next(self: *@This()) ?*Node {
                 const r = self.p;
                 if (r) |t| self.p = t.next();
 
                 return r;
+            }
+        };
+
+        pub const Iterator = struct {
+            iter: NodeIterator,
+            pub fn next(self: *@This()) ?KV {
+                const e = self.iter.next() orelse return null;
+                return .{ .key = e.key, .value = e.value };
             }
         };
 
@@ -348,14 +357,15 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
 
         /// Finds the value associated with a key in the map
         pub fn get(self: *const @This(), k: K) ?V {
-            return (self.getPtr(k) orelse return null).*;
+            return (@constCast(self).getPtr(k) orelse return null).*;
         }
         /// Finds the value associated with a key in the map, and returns the pointer to it
-        pub fn getPtr(self: *const @This(), k: K) ?*V {
+        pub fn getPtr(self: *@This(), k: K) ?*V {
             return &(self.getNode(k) orelse return null).value;
         }
 
-        pub fn getNode(self: *const @This(), k: K) ?*Node {
+        /// Finds the node associated with a key in the map
+        pub fn getNode(self: *@This(), k: K) ?*Node {
             var n: *Node = self.root orelse return null;
             while (true) {
                 switch (if (@TypeOf(ctx) == void) comp_fn(k, n.key) else comp_fn(k, n.key, ctx)) {
@@ -372,12 +382,14 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
             return node;
         }
 
+        /// Removes the first element from the map and returns its value
         pub fn deque(self: *@This()) ?V {
-            return (self.dequeWithKey() orelse return null)[1];
+            return (self.dequeWithKey() orelse return null).value;
         }
-        pub fn dequeWithKey(self: *@This()) ?struct { K, V } {
+        /// Removes the first element from the map and returns its key and value
+        pub fn dequeWithKey(self: *@This()) ?KV {
             const node: *Node = self.getFirstNode() orelse return null;
-            const r: returnType(@TypeOf(dequeWithKey)).? = .{ node.key, node.value };
+            const r: KV = .{ .key = node.key, .value = node.value };
             self.removeNode(node);
 
             return r;
@@ -391,7 +403,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
 
         /// Check if the map contains a key
         pub fn contains(self: *const @This(), k: K) bool {
-            return self.getNode(k) != null;
+            return @constCast(self).getNode(k) != null;
         }
 
         pub const GetOrPutResult = struct {
@@ -487,6 +499,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
             }
         }
 
+        /// Remove a node associated with e key, and return its value
         pub fn fetchRemove(self: *@This(), k: K) ?V {
             const node: *Node = self.getNode(k) orelse return null;
             defer self.removeNode(node);
@@ -498,11 +511,14 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
             return self.fetchRemove(k) != null;
         }
 
+        pub fn nodeIterator(self: *@This()) NodeIterator {
+            return .{ .p = self.getFirstNode() };
+        }
 
         /// Create an iterator over the entries in the map.
         /// The iterator is invalidated if the map is modified.
-        pub fn iterator(self: *@This()) Iterator {
-            return .{ .p = self.getFirstNode() };
+        pub fn iterator(self: *const @This()) Iterator {
+            return .{ .iter = @constCast(self).nodeIterator() };
         }
 
         /// Set the map to an empty state, making deinitialization a no-op, and
@@ -512,7 +528,7 @@ pub fn OrderedMap(comptime K: type, comptime V: type, ctx: anytype, comptime com
             return self.*;
         }
 
-        pub fn clone(self: *@This()) AllocError!@This() {
+        pub fn clone(self: *const @This()) AllocError!@This() {
             if (self.count == 0) return .{ .alloc = self.alloc };
 
             var ret: @This() = .{ .root = try self.alloc.create(Node), .alloc = self.alloc, .count = self.count };
