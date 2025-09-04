@@ -4,7 +4,7 @@ const AllocError: type = std.mem.Allocator.Error;
 /// Given a struct pointer, and an offset, it returns a pointer to the field at that, offset
 inline fn atOffset(stru: anytype, offset: usize, comptime T: type) *T {
     const info = @typeInfo(@TypeOf(stru));
-    if (info != .Pointer or @typeInfo(info.Pointer.child) != .Struct) @compileError("Struct pointers only");
+    if (info != .pointer or @typeInfo(info.pointer.child) != .@"struct") @compileError("Struct pointers only");
     return @ptrFromInt(@intFromPtr(stru) + offset);
 }
 
@@ -15,10 +15,10 @@ inline fn atOffset(stru: anytype, offset: usize, comptime T: type) *T {
 /// - `argTypes(fn([]u8, anytype) c_int)` => `&[_]const ?type{[]u8, null}`
 fn argTypes(comptime Function: type) []const ?type {
     const info = @typeInfo(Function);
-    if (info != .Fn)
+    if (info != .@"fn")
         @compileError("argTypes expects a function type");
 
-    const function_info = info.Fn;
+    const function_info = info.@"fn";
     if (function_info.is_var_args)
         @compileError("Cannot use argTypes on variadic function");
 
@@ -33,8 +33,8 @@ fn argTypes(comptime Function: type) []const ?type {
 
 pub fn OrderedMapUnmanaged(comptime K: type, comptime V: type, ctx: anytype, comptime comp_fn: anytype) type {
     const inf = @typeInfo(@TypeOf(comp_fn));
-    if (inf != .Fn) @compileError("comperison function must be a function");
-    if (inf.Fn.return_type != std.math.Order) @compileError("retrun type of comperison function must be std.math.Order");
+    if (inf != .@"fn") @compileError("comperison function must be a function");
+    if (inf.@"fn".return_type != std.math.Order) @compileError("retrun type of comperison function must be std.math.Order");
     const args = argTypes(@TypeOf(comp_fn));
     if (@TypeOf(ctx) == void and args.len != 2)
         @compileError("Contextless comperison function must take 2 arguments");
@@ -1344,7 +1344,7 @@ test "put and remove loop in random order" {
     var map = AutoOrderedMap(u32, u32){ .alloc = std.testing.allocator };
     defer map.deinit();
 
-    var keys = std.ArrayList(u32).init(std.testing.allocator);
+    var keys: std.array_list.Managed(u32) = .init(std.testing.allocator);
     defer keys.deinit();
 
     const size = 32;
@@ -1377,7 +1377,7 @@ test "remove one million elements in random order" {
     var map = AutoOrderedMap(u32, u32){ .alloc = std.testing.allocator };
     defer map.deinit();
 
-    var keys = std.ArrayList(u32).init(std.heap.page_allocator);
+    var keys: std.array_list.Managed(u32) = .init(std.heap.page_allocator);
     defer keys.deinit();
 
     var i: u32 = 0;

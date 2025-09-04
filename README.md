@@ -8,7 +8,7 @@ Ordered Map in Zig, with an interface similar to HashMap's
 .dependencies = .{
     .ordered_map=.{
         .url = "https://github.com/Mecso2/zig-ordered-map/archive/refs/heads/master.tar.gz",
-        .hash = "122059bc9b92271c8d229d809d8540e2ba8014decebfb250143afecb451e7f217cbb"
+        .hash = "ordered_map-1.0.1-OChsRPn0AAAHDReeqrkWKBMRb9NP5sgtCH6Qps0j2lVl"
     }
 }
 ```
@@ -20,16 +20,15 @@ exe.root_module.addImport("om", b.dependency("ordered_map", .{}).module("the"));
 ```zig
 const std = @import("std");
 const om = @import("om");
-const stdout=std.io.getStdOut().writer();
 
 
 pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{})=.{};
+    var gpa: std.heap.DebugAllocator(.{})=.{};
 
     var map: om.AutoOrderedMap(u32, u32)=.{.alloc = gpa.allocator()};
     defer map.deinit();
 
     try map.put(5, 39);
-    try stdout.print("{?d}", .{map.get(5)});
+    stdout.debug.print("{?d}", .{map.get(5)});
 }
 ```
